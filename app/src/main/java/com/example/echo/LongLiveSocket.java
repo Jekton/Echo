@@ -2,6 +2,7 @@ package com.example.echo;
 
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.util.Log;
 
 import java.io.Closeable;
@@ -23,6 +24,7 @@ public final class LongLiveSocket {
 
     private static final long RETRY_INTERVAL_MILLIS = 3 * 1000;
     private static final long HEART_BEAT_INTERVAL_MILLIS = 5 * 1000;
+    private static final long HEART_BEAT_TIMEOUT_MILLIS = 2 * 1000;
 
     /**
      * 错误回调
@@ -60,6 +62,7 @@ public final class LongLiveSocket {
     private final AtomicReference<Socket> mSocketRef = new AtomicReference<>();
     private final HandlerThread mWriterThread;
     private final Handler mWriterHandler;
+    private final Handler mUIHandler = new Handler(Looper.getMainLooper());
 
     private final Runnable mHeartBeatTask = new Runnable() {
         private byte[] mHeartBeat = new byte[0];
@@ -70,6 +73,7 @@ public final class LongLiveSocket {
                 @Override
                 public void onSuccess() {
                     mWriterHandler.postDelayed(mHeartBeatTask, HEART_BEAT_INTERVAL_MILLIS);
+                    mUIHandler.postDelayed(mHeartBeatTimeoutTask, HEART_BEAT_TIMEOUT_MILLIS);
                 }
 
                 @Override
@@ -78,6 +82,11 @@ public final class LongLiveSocket {
                 }
             });
         }
+    };
+
+    private final Runnable mHeartBeatTimeoutTask = () -> {
+        Log.e(TAG, "mHeartBeatTimeoutTask#run: heart beat timeout");
+        closeSocket();
     };
 
 
@@ -154,6 +163,19 @@ public final class LongLiveSocket {
     }
 
     public void close() {
+        if (Looper.getMainLooper() == Looper.myLooper()) {
+            new Thread() {
+                @Override
+                public void run() {
+                    doClose();
+                }
+            }.start();
+        } else {
+            doClose();
+        }
+    }
+
+    private void doClose() {
         mWriterThread.quit();
         closeSocket();
         mWriterThread.interrupt();
@@ -198,6 +220,7 @@ public final class LongLiveSocket {
                 int nbyte = in.readInt();
                 if (nbyte == 0) {
                     Log.i(TAG, "readResponse: heart beat received");
+                    mUIHandler.removeCallbacks(mHeartBeatTimeoutTask);
                     continue;
                 }
 
@@ -221,7 +244,7 @@ public final class LongLiveSocket {
             while (n > 0) {
                 int readBytes = in.read(buffer, offset, n);
                 if (readBytes < 0) {
-                    // EOF
+                    // EoF
                     break;
                 }
                 n -= readBytes;
