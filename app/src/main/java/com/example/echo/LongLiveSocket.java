@@ -99,7 +99,7 @@ public final class LongLiveSocket {
             try {
                 Socket socket = new Socket(mHost, mPort);
                 mSocketRef.set(socket);
-                Thread reader = new Thread(new ReaderTask(socket));
+                Thread reader = new Thread(new ReaderTask(socket), "socket-reader");
                 reader.start();
                 mWriterHandler.post(mHeartBeatTask);
                 break;
