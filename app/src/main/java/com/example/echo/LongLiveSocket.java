@@ -108,9 +108,8 @@ public final class LongLiveSocket {
 
     private void initSocket() {
         while (true) {
-            synchronized (mLock) {
-                if (mClosed) return;
-            }
+            if (closed()) return;
+
             try {
                 Socket socket = new Socket(mHost, mPort);
                 synchronized (mLock) {
