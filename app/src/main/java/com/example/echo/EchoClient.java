@@ -32,4 +32,8 @@ public class EchoClient {
             }
         });
     }
+
+    public void close() {
+        mLongLiveSocket.close();
+    }
 }

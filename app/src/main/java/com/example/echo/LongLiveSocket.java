@@ -59,10 +59,13 @@ public final class LongLiveSocket {
     private final DataCallback mDataCallback;
     private final ErrorCallback mErrorCallback;
 
-    private final AtomicReference<Socket> mSocketRef = new AtomicReference<>();
     private final HandlerThread mWriterThread;
     private final Handler mWriterHandler;
     private final Handler mUIHandler = new Handler(Looper.getMainLooper());
+
+    private final Object mLock = new Object();
+    private Socket mSocket;  // guarded by mLock
+    private boolean mClosed; // guarded by mLock
 
     private final Runnable mHeartBeatTask = new Runnable() {
         private byte[] mHeartBeat = new byte[0];
@@ -105,16 +108,25 @@ public final class LongLiveSocket {
 
     private void initSocket() {
         while (true) {
+            synchronized (mLock) {
+                if (mClosed) return;
+            }
             try {
                 Socket socket = new Socket(mHost, mPort);
-                mSocketRef.set(socket);
-                Thread reader = new Thread(new ReaderTask(socket), "socket-reader");
-                reader.start();
-                mWriterHandler.post(mHeartBeatTask);
+                synchronized (mLock) {
+                    if (mClosed) {
+                        silentlyClose(socket);
+                        return;
+                    }
+                    mSocket = socket;
+                    Thread reader = new Thread(new ReaderTask(socket), "socket-reader");
+                    reader.start();
+                    mWriterHandler.post(mHeartBeatTask);
+                }
                 break;
             } catch (IOException e) {
                 Log.e(TAG, "initSocket: ", e);
-                if (!mErrorCallback.onError()) {
+                if (closed() || !mErrorCallback.onError()) {
                     break;
                 }
                 try {
@@ -133,7 +145,7 @@ public final class LongLiveSocket {
 
     public void write(byte[] data, int offset, int len, WritingCallback callback) {
         mWriterHandler.post(() -> {
-            Socket socket = mSocketRef.get();
+            Socket socket = getSocket();
             if (socket == null) {
                 throw new IllegalStateException("Socket not initialized");
             }
@@ -147,19 +159,37 @@ public final class LongLiveSocket {
                 Log.e(TAG, "write: ", e);
                 closeSocket();
                 callback.onFail(data, offset, len);
-                if (mErrorCallback.onError()) {
+                if (!closed() && mErrorCallback.onError()) {
                     initSocket();
                 }
             }
         });
     }
 
-    private void closeSocket() {
-        Socket socket = mSocketRef.getAndSet(null);
-        if (socket != null) {
-            silentlyClose(socket);
-            mWriterHandler.removeCallbacks(mHeartBeatTask);
+    private boolean closed() {
+        synchronized (mLock) {
+            return mClosed;
         }
+    }
+
+    private Socket getSocket() {
+        synchronized (mLock) {
+            return mSocket;
+        }
+    }
+
+    private void closeSocket() {
+        synchronized (mLock) {
+            closeSocketLocked();
+        }
+    }
+
+    private void closeSocketLocked() {
+        if (mSocket == null) return;
+
+        silentlyClose(mSocket);
+        mSocket = null;
+        mWriterHandler.removeCallbacks(mHeartBeatTask);
     }
 
     public void close() {
@@ -176,8 +206,11 @@ public final class LongLiveSocket {
     }
 
     private void doClose() {
+        synchronized (mLock) {
+            mClosed = true;
+            closeSocketLocked();
+        }
         mWriterThread.quit();
-        closeSocket();
         mWriterThread.interrupt();
     }
 
