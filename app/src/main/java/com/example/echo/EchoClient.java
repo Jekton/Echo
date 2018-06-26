@@ -28,6 +28,7 @@ public class EchoClient {
             @Override
             public void onFail(byte[] data, int offset, int len) {
                 Log.w(TAG, "onFail: fail to write: " + new String(data, offset, len));
+                mLongLiveSocket.write(data, offset, len, this);
             }
         });
     }
