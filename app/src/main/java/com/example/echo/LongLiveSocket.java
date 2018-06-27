@@ -72,9 +72,11 @@ public final class LongLiveSocket {
 
         @Override
         public void run() {
+            // 我们使用长度为 0 的数据作为 heart beat
             write(mHeartBeat, new WritingCallback() {
                 @Override
                 public void onSuccess() {
+                    // 每隔 HEART_BEAT_INTERVAL_MILLIS 发送一次
                     mWriterHandler.postDelayed(mHeartBeatTask, HEART_BEAT_INTERVAL_MILLIS);
                     mUIHandler.postDelayed(mHeartBeatTimeoutTask, HEART_BEAT_TIMEOUT_MILLIS);
                 }
@@ -82,6 +84,7 @@ public final class LongLiveSocket {
                 @Override
                 public void onFail(byte[] data, int offset, int len) {
                     // nop
+                    // write() 方法会处理失败
                 }
             });
         }
@@ -113,11 +116,13 @@ public final class LongLiveSocket {
             try {
                 Socket socket = new Socket(mHost, mPort);
                 synchronized (mLock) {
+                    // 在我们创建 socket 的时候，客户可能就调用了 close()
                     if (mClosed) {
                         silentlyClose(socket);
                         return;
                     }
                     mSocket = socket;
+                    // 每次创建新的 socket，会开一个线程来读数据
                     Thread reader = new Thread(new ReaderTask(socket), "socket-reader");
                     reader.start();
                     mWriterHandler.post(mHeartBeatTask);
@@ -146,6 +151,7 @@ public final class LongLiveSocket {
         mWriterHandler.post(() -> {
             Socket socket = getSocket();
             if (socket == null) {
+                // initSocket 失败而客户说不需要重连，但客户又叫我们给他发送数据
                 throw new IllegalStateException("Socket not initialized");
             }
             try {
@@ -207,9 +213,11 @@ public final class LongLiveSocket {
     private void doClose() {
         synchronized (mLock) {
             mClosed = true;
+            // 关闭 socket，从而使得阻塞在 socket 上的线程返回
             closeSocketLocked();
         }
         mWriterThread.quit();
+        // 在重连的时候，有个 sleep
         mWriterThread.interrupt();
     }
 
