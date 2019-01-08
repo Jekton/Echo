@@ -13,7 +13,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 
 /**
@@ -67,18 +66,31 @@ public final class LongLiveSocket {
     private Socket mSocket;  // guarded by mLock
     private boolean mClosed; // guarded by mLock
 
+    private volatile int mSeqNumHeartBeatSent;
+    private volatile int mSeqNumHeartBeatRecv;
+
     private final Runnable mHeartBeatTask = new Runnable() {
         private byte[] mHeartBeat = new byte[0];
 
         @Override
         public void run() {
+            // no need to be atomic
+            // noinspection NonAtomicOperationOnVolatileField
+            ++mSeqNumHeartBeatSent;
             // 我们使用长度为 0 的数据作为 heart beat
             write(mHeartBeat, new WritingCallback() {
                 @Override
                 public void onSuccess() {
                     // 每隔 HEART_BEAT_INTERVAL_MILLIS 发送一次
                     mWriterHandler.postDelayed(mHeartBeatTask, HEART_BEAT_INTERVAL_MILLIS);
-                    mUIHandler.postDelayed(mHeartBeatTimeoutTask, HEART_BEAT_TIMEOUT_MILLIS);
+                    // At this point, the heart-beat might be received and handled
+                    if (mSeqNumHeartBeatRecv < mSeqNumHeartBeatSent) {
+                        mUIHandler.postDelayed(mHeartBeatTimeoutTask, HEART_BEAT_TIMEOUT_MILLIS);
+                        // double check
+                        if (mSeqNumHeartBeatRecv == mSeqNumHeartBeatSent) {
+                            mUIHandler.removeCallbacks(mHeartBeatTimeoutTask);
+                        }
+                    }
                 }
 
                 @Override
@@ -261,6 +273,7 @@ public final class LongLiveSocket {
                 if (nbyte == 0) {
                     Log.i(TAG, "readResponse: heart beat received");
                     mUIHandler.removeCallbacks(mHeartBeatTimeoutTask);
+                    mSeqNumHeartBeatRecv = mSeqNumHeartBeatSent;
                     continue;
                 }
 
