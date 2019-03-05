@@ -163,8 +163,17 @@ public final class LongLiveSocket {
         mWriterHandler.post(() -> {
             Socket socket = getSocket();
             if (socket == null) {
-                // initSocket 失败而客户说不需要重连，但客户又叫我们给他发送数据
-                throw new IllegalStateException("Socket not initialized");
+                // 心跳超时的情况下，这里 socket 会是 null
+                initSocket();
+                socket = getSocket();
+                if (socket == null) {
+                    if (!closed()) {
+                        callback.onFail(data, offset, len);
+                    } /* else {
+                        // silently drop the data
+                    } */
+                    return;
+                }
             }
             try {
                 OutputStream outputStream = socket.getOutputStream();
